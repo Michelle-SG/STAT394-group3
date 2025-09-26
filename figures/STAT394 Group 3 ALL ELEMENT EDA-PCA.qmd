@@ -1,0 +1,144 @@
+---
+title: "STAT394 General"
+format: pdf
+editor: visual
+---
+
+```{r}
+library(ggplot2)
+library(tidyverse)
+library(corrplot)
+library(GGally)
+library(knitr)
+library(ggbiplot)
+```
+
+```{r}
+# Data setup
+df <- read.csv("C:\\Users\\k4n3r\\iCloudDrive\\Desktop\\Max\\orichalcum_ingots_dataset.csv", skip = 1, header = TRUE)
+Ingots <- df[, 1:(ncol(df)-2)]
+colnames(Ingots) <- c("Sample","Cu","Zn","Pb","Fe","Ni","Ag","Sb","As","Co","Cd","Sn","Te","Bi","Mn","Li","Al","V","Cr","Rb","Sr","Ba")
+head(Ingots)
+
+Ingots.long <- Ingots %>%
+  pivot_longer(!Sample, names_to = "Element", values_to = "Concentration")
+head(Ingots.long)
+```
+
+```{r}
+# Summary histograms
+ggplot(Ingots.long, aes(x = Concentration)) +
+  # Histogram
+  geom_histogram(bins = nclass.FD(Ingots.long$Concentration),
+                 fill = "skyblue", color = "white") +
+  # Boxplot, anchored at y = -0.5 so it sits below
+  geom_boxplot(aes(y = -0.5), notch = TRUE, box.color='orange', alpha = 0.7, width = 0.3, outlier.size = 1) +
+  facet_wrap(~Element, scales = "free_x", ncol = 2) +
+  theme_minimal() +
+  labs(title = "All element histograms with boxplots",
+       x = "Concentration",
+       y = NULL) +
+  theme(
+    strip.text = element_text(face = "bold"),
+    axis.text.y = element_blank(),
+    axis.ticks.y = element_blank(),
+    panel.grid.major.y = element_blank(),
+    panel.grid.minor.y = element_blank()
+  )
+
+
+summary_table <- Ingots %>%
+  select(-Sample) %>%
+  pivot_longer(everything(), names_to = "Element", values_to = "Concentration") %>%
+  group_by(Element) %>%
+  summarise(
+    Mean   = mean(Concentration, na.rm = TRUE),
+    Median = median(Concentration, na.rm = TRUE),
+    LQ     = quantile(Concentration, 0.25, na.rm = TRUE),
+    UQ     = quantile(Concentration, 0.75, na.rm = TRUE),
+    Min    = min(Concentration, na.rm = TRUE),
+    Max    = max(Concentration, na.rm = TRUE),
+    .groups = "drop"
+  )
+kable(summary_table)
+```
+
+Sort histograms better - Boxplot issues as well. Reorganise table by order of elements in dataset.
+
+```{r}
+# Mahalanobis Distances
+est.mu <- colMeans(Ingots[,-1])
+est.covar <- var(Ingots[,-1])
+
+dM <- mahalanobis(Ingots[,-1], est.mu, est.covar)
+upper.quantiles <- qchisq(c(.9, .95, .99), df=21)
+density.at.quantiles <- dchisq(x=upper.quantiles, df=21)
+cut.points <- data.frame(upper.quantiles, density.at.quantiles)
+
+ggplot(data.frame(dM), aes(x=dM)) +
+  geom_histogram(aes(y=after_stat(density)), bins=nclass.FD(dM),
+  fill="white", col="black") +
+  stat_function(fun=dchisq, args = list(df=21),
+  col="blue", linewidth=2, alpha=.7, xlim=c(0,65)) +
+  geom_segment(data=cut.points,
+  aes(x=upper.quantiles, xend=upper.quantiles,
+  y=rep(0,3), yend=density.at.quantiles),
+  col="red", linewidth=1)
+
+upper.quantiles
+
+x <- sum(dM > upper.quantiles[2])
+x
+```
+
+```{r}
+# Suprise values
+Ingots$dM <- dM
+Ingots$surprise <- cut(Ingots$dM,
+                    breaks= c(0, upper.quantiles, Inf),
+                    labels=c("Typical", "Somewhat", "Surprising", "Very"))
+pander(table(Ingots$surprise))
+```
+
+```{r}
+# PCA
+df <- read.csv("C:\\Users\\k4n3r\\iCloudDrive\\Desktop\\Max\\orichalcum_ingots_dataset.csv", skip = 1, header = TRUE)
+pca.ingots.init <- df[, 1:(ncol(df)-2)]
+colnames(pca.ingots.init) <- c("Sample","Cu","Zn","Pb","Fe","Ni","Ag","Sb","As","Co","Cd","Sn","Te","Bi","Mn","Li","Al","V","Cr","Rb","Sr","Ba")
+
+PCA.Ingots <- prcomp(pca.ingots.init[,-1], center = T, scale = T)
+PCA.Ingots$sdev
+
+variance.PCA.Ingots <- PCA.Ingots$sdev^2 / sum(PCA.Ingots$sdev^2)
+qplot(c(1:21), variance.PCA.Ingots) +
+  geom_line() +
+  geom_point(size = 4) +
+  xlab("Principal Component") +
+  ylab("Variance Explained") +
+  ggtitle("Scree Plot") +
+  ylim(0,1)
+
+ggbiplot(PCA.Ingots, obs.scale = 1, var.scale = 1, alpha = 0.1, 
+         labels = Ingots$Sample, groups = Ingots$surpise,
+         varname.size = 3, ellipse = TRUE, circle = TRUE)
+```
+
+```{r}
+pca.ingots.init.outliers <- pca.ingots.init[-c(13,38), ]
+Ingots.outliers <- Ingots[-c(13,38),]
+
+PCA.Ingots.outliers <- prcomp(pca.ingots.init.outliers[,-1], center = T, scale = T)
+
+variance.PCA.Ingots.outliers <- PCA.Ingots.outliers$sdev^2 / sum(PCA.Ingots.outliers$sdev^2)
+qplot(c(1:21), variance.PCA.Ingots.outliers) +
+  geom_line() +
+  geom_point(size = 4) +
+  xlab("Principal Component") +
+  ylab("Variance Explained") +
+  ggtitle("Scree Plot") +
+  ylim(0,1)
+
+ggbiplot(PCA.Ingots.outliers, obs.scale = 1, var.scale = 1, alpha = 0.1, 
+         labels = Ingots.outliers$Sample, groups = Ingots.outliers$surpise,
+         varname.size = 3, ellipse = TRUE, circle = TRUE)
+```
