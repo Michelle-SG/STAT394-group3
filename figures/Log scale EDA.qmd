@@ -1,0 +1,131 @@
+---
+title: "STAT394 General"
+format: pdf
+editor: visual
+---
+
+```{r}
+library(ggplot2)
+library(tidyverse)
+library(corrplot)
+library(GGally)
+library(knitr)
+library(ggbiplot)
+```
+
+```{r}
+# Data setup, Log scaled and then normalised
+df <- read.csv("C:\\Users\\k4n3r\\iCloudDrive\\Desktop\\Max\\orichalcum_ingots_dataset.csv", skip = 1, header = TRUE)
+Ingots <- df[, 1:(ncol(df)-2)]
+colnames(Ingots) <- c("Sample","Cu","Zn","Pb","Fe","Ni","Ag","Sb","As","Co","Cd","Sn","Te","Bi","Mn","Li","Al","V","Cr","Rb","Sr","Ba")
+
+Ingots.log <- log(Ingots[,-1])
+Ingots.log <- cbind('Sample' = Ingots$Sample, Ingots.log)
+
+Ingots.log.norm <- Ingots.log %>%
+  mutate(across(where(is.numeric), ~ ((. - mean(.))/mean(.)) * 100))
+
+Ingots.log.norm.long <- Ingots.log.norm %>%
+  pivot_longer(!Sample, names_to = "Element", values_to = "Concentration")
+```
+
+```{r}
+# Summary histograms
+ggplot(Ingots.log.norm.long, aes(x = Concentration)) +
+  # Histogram
+  geom_histogram(bins = nclass.FD(Ingots.log.norm.long$Concentration),
+                 fill = "skyblue", color = "white") +
+  # Boxplot, anchored at y = -0.5 so it sits below
+  geom_boxplot(aes(y = -0.5), notch = TRUE, box.color='orange', alpha = 0.7, width = 0.3, outlier.size = 1) +
+  facet_wrap(~Element, scales = "free_x", ncol = 2) +
+  theme_minimal() +
+  labs(title = "Log-scaled/Normalised element histograms with boxplots",
+       x = "Concentration",
+       y = NULL) +
+  theme(
+    strip.text = element_text(face = "bold"),
+    axis.text.y = element_blank(),
+    axis.ticks.y = element_blank(),
+    panel.grid.major.y = element_blank(),
+    panel.grid.minor.y = element_blank()
+  )
+
+
+summary_table <- Ingots.log.norm %>%
+  select(-Sample) %>%
+  pivot_longer(everything(), names_to = "Element", values_to = "Concentration") %>%
+  group_by(Element) %>%
+  summarise(
+    Mean   = mean(Concentration, na.rm = TRUE),
+    Median = median(Concentration, na.rm = TRUE),
+    LQ     = quantile(Concentration, 0.25, na.rm = TRUE),
+    UQ     = quantile(Concentration, 0.75, na.rm = TRUE),
+    Min    = min(Concentration, na.rm = TRUE),
+    Max    = max(Concentration, na.rm = TRUE),
+    .groups = "drop"
+  )
+kable(summary_table)
+```
+
+```{r}
+# Correlation plot
+corrplot(cor(Ingots.log.norm[2:21]), method='circle', type='upper', 
+         title = "Correlation of log-scaled/normalised elements")
+```
+
+```{r}
+# Pairs plot
+ggpairs(Ingots.log.norm[,-1], columns = 1:21, 
+        upper=list(continuous="density", combo="box_no_facet", 
+                   ggplot2::aes(col=surprise, alpha=.5), title="Pairs of log-scaled/normalised elements"))
+
+# ABSOLUTELY ABYSMAL WOULDN'T RECOMMEND RUNNING
+```
+
+```{r}
+# Mahalanobis Distances
+est.mu <- colMeans(Ingots.log.norm[2:21])
+est.covar <- var(Ingots.log.norm[2:21])
+
+dM <- mahalanobis(Ingots.log.norm[2:21], est.mu, est.covar)
+upper.quantiles <- qchisq(c(.9, .95, .99), df=21)
+density.at.quantiles <- dchisq(x=upper.quantiles, df=21)
+cut.points <- data.frame(upper.quantiles, density.at.quantiles)
+
+ggplot(data.frame(dM), aes(x=dM)) +
+  geom_histogram(aes(y=after_stat(density)), bins=nclass.FD(dM),
+  fill="white", col="black") +
+  stat_function(fun=dchisq, args = list(df=21),
+  col="blue", linewidth=2, alpha=.7, xlim=c(0,65)) +
+  geom_segment(data=cut.points,
+  aes(x=upper.quantiles, xend=upper.quantiles,
+  y=rep(0,3), yend=density.at.quantiles),
+  col="red", linewidth=1)
+
+Ingots.log.norm$dM <- dM
+Ingots.log.norm$surprise <- cut(Ingots.log.norm$dM,
+                    breaks= c(0, upper.quantiles, Inf),
+                    labels=c("Typical", "Somewhat", "Surprising", "Very"))
+table(Ingots.log.norm$surprise)
+
+head(Ingots.log.norm)
+```
+
+```{r}
+# PCA
+PCA.Ingots.log.norm <- prcomp(Ingots.log.norm[2:21], center = T, scale = T)
+summary(PCA.Ingots.log.norm)
+
+variance.PCA.Ingots.log.norm <- PCA.Ingots.log.norm$sdev^2 / sum(PCA.Ingots.log.norm$sdev^2)
+qplot(c(1:20), variance.PCA.Ingots.log.norm) +
+  geom_line() +
+  geom_point(size = 4) +
+  xlab("Principal Component") +
+  ylab("Variance Explained") +
+  ggtitle("Scree Plot") +
+  ylim(0,1)
+
+ggbiplot(PCA.Ingots.log.norm, obs.scale = 1, var.scale = 1, alpha = 0.1, 
+         labels = Ingots.log.norm$Sample, groups = Ingots.log.norm$surpise,
+         varname.size = 3, ellipse = TRUE, circle = TRUE)
+```
