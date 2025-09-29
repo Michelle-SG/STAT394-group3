@@ -1,0 +1,217 @@
+---
+title: "STAT394 Project - Cluster Analysis"
+author: "STAT394 Project Group 3"
+date: "`r Sys.Date()`"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+set.seed(9000)
+require(dplyr)
+require(stats)
+library(tidyverse)
+library(knitr)
+library(pander)
+library(ggrepel)
+library(scales)
+require(deldir)
+require(cluster)
+require(factoextra)
+require(dendextend)
+#thanks to max and/or connor and/or michelle for this bc this was not me
+knitr::opts_chunk$set(echo = TRUE)
+df <- read.csv("orichalcum_ingots_dataset.csv", skip = 1, header = TRUE)
+Ingots <- df[, 1:(ncol(df)-2)]
+colnames(Ingots) <- c("Sample","Cu","Zn","Pb","Fe","Ni","Ag","Sb","As","Co","Cd","Sn","Te","Bi","Mn","Li","Al","V","Cr","Rb","Sr","Ba")
+
+Ingots.log <- log(Ingots[,-1])
+Ingots.log <- cbind('Sample' = Ingots$Sample, Ingots.log)
+
+Ingots.log.norm <- Ingots.log %>%
+  mutate(across(where(is.numeric), ~ ((. - mean(.))/mean(.)) * 100))
+Ingots.log.norm.noid<-Ingots.log.norm[,-1]
+```
+
+# Notes for us
+
+- k-means only allows for euclid and manhattan, therefore does not satisfy the 3 distances condition
+
+- k-medoids (PAM) only allows for variations of euclid and manhattan afaik, so also not suitable
+
+- hierarchical clustering can use a bunch of different distances
+  - https://www.rdocumentation.org/packages/stats/versions/3.6.2/topics/dist
+  - https://www.rdocumentation.org/packages/stats/versions/3.6.2/topics/hclust 
+  
+- method="ward.D2" is the same as method="complete" for hclust
+
+# Choosing k 
+  
+```{r}
+km<-function(k){
+  kmeans(Ingots.log.norm.noid,k,iter.max=100,nstart=50)$tot.withinss}
+
+elbow1<-sapply(1:10,km)
+
+plot(1:10,elbow1,
+     type="b",pch=21,bg="pink",col="brown",
+     xlab="k",ylab="Total within-cluster variation",
+     main="Variation at each number of clusters")
+```
+
+These within-cluster variation values are honestly just awful. But anyways so Toby and I decided that we'd try out both 3 and 4. I know it's different though since this is based on k-means...
+
+# Euclidean
+
+```{r}
+dist1<-dist(Ingots.log.norm.noid,method="euclidean")
+clust1<-hclust(dist1)
+```
+
+
+So I found this https://cran.r-project.org/web/packages/dendextend/vignettes/FAQ.html 
+
+## k=3
+
+```{r}
+dend1<-as.dendrogram(hclust(dist(Ingots.log.norm.noid)))
+dend1 <- dend1 %>%
+          color_branches(k = 3) %>% 
+          set("branches_lwd", c(2,1,2)) %>%
+          set("branches_lty", c(1,2,1))
+dend1<-color_labels(dend1, k = 3)
+plot(dend1)
+```
+
+## k=4
+
+```{r}
+dend1<-as.dendrogram(hclust(dist(Ingots.log.norm.noid)))
+dend1 <- dend1 %>%
+          color_branches(k = 4) %>% 
+          set("branches_lwd", c(2,1,2)) %>%
+          set("branches_lty", c(1,2,1))
+dend1<-color_labels(dend1, k = 4)
+plot(dend1)
+```
+
+Uhhh kinda different to the one in the paper
+
+
+# Manhattan
+
+## k=3
+
+```{r}
+dist2<-dist(Ingots.log.norm.noid,method="manhattan")
+clust2<-hclust(dist2)
+dend2<-as.dendrogram(clust2)
+dend2<- dend2 %>%
+          color_branches(k = 3) %>% 
+          set("branches_lwd", c(2,1,2)) %>%
+          set("branches_lty", c(1,2,1))
+dend2<-color_labels(dend2, k = 3)
+plot(dend2)
+```
+
+## k = 4
+
+```{r}
+dist2<-dist(Ingots.log.norm.noid,method="manhattan")
+clust2<-hclust(dist2)
+dend2<-as.dendrogram(clust2)
+dend2<- dend2 %>%
+          color_branches(k = 4) %>% 
+          set("branches_lwd", c(2,1,2)) %>%
+          set("branches_lty", c(1,2,1))
+dend2<-color_labels(dend2, k = 4)
+plot(dend2)
+```
+
+# Minkowski p=1.5
+
+## k=3
+
+```{r}
+dist3<-dist(Ingots.log.norm.noid,method="minkowski",p=1.5)
+clust3<-hclust(dist3)
+dend3<-as.dendrogram(clust3)
+dend3<- dend3 %>%
+          color_branches(k = 3) %>% 
+          set("branches_lwd", c(2,1,2)) %>%
+          set("branches_lty", c(1,2,1))
+dend3<-color_labels(dend3, k = 3)
+plot(dend3)
+```
+
+## k=4
+
+```{r}
+dend3<-as.dendrogram(clust3)
+dend3<- dend3 %>%
+          color_branches(k = 4) %>% 
+          set("branches_lwd", c(2,1,2)) %>%
+          set("branches_lty", c(1,2,1))
+dend3<-color_labels(dend3, k = 4)
+plot(dend3)
+```
+
+# Minkowski p=1 (meant to be similar to/same as manhattan)
+
+## k=3 
+
+```{r}
+dist4<-dist(Ingots.log.norm.noid,method="minkowski",p=1)
+clust4<-hclust(dist4)
+dend4<-as.dendrogram(clust4)
+dend4<- dend4 %>%
+          color_branches(k = 3) %>% 
+          set("branches_lwd", c(2,1,2)) %>%
+          set("branches_lty", c(1,2,1))
+dend4<-color_labels(dend4, k = 3)
+plot(dend4) 
+```
+
+^ Looks the same as manhattan to me !!
+
+```{r}
+dend4<-as.dendrogram(clust4)
+dend4<- dend4 %>%
+          color_branches(k = 4) %>% 
+          set("branches_lwd", c(2,1,2)) %>%
+          set("branches_lty", c(1,2,1))
+dend4<-color_labels(dend4, k = 4)
+plot(dend4) 
+```
+
+^ Again literally looks the same
+
+# Minkowski p=2 (meant to be same as euclidean)
+
+## k=3
+
+```{r}
+dist5<-dist(Ingots.log.norm.noid,method="minkowski",p=2)
+clust5<-hclust(dist5)
+dend5<-as.dendrogram(clust5)
+dend5<- dend5 %>%
+          color_branches(k = 3) %>% 
+          set("branches_lwd", c(2,1,2)) %>%
+          set("branches_lty", c(1,2,1))
+dend5<-color_labels(dend5, k = 3)
+plot(dend5) 
+```
+
+Looks the same as the previous euclid ones!
+
+
+```{r}
+dend5<-as.dendrogram(clust5)
+dend5<- dend5 %>%
+          color_branches(k = 4) %>% 
+          set("branches_lwd", c(2,1,2)) %>%
+          set("branches_lty", c(1,2,1))
+dend5<-color_labels(dend5, k = 4)
+plot(dend5) 
+```
+
+Again looks the same. So we could justify our choices like "we chose p=1.5 since it is between manhattan and euclidean"
