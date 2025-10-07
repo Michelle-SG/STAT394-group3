@@ -1,0 +1,167 @@
+---
+title: "MAD scaling"
+output: pdf_document
+date: "2025-10-07"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+df <- read.csv("orichalcum_ingots_dataset.csv", skip = 1, header = TRUE)
+
+Ingots <- df[, 1:(ncol(df)-2)]
+colnames(Ingots) <- c(
+  "Sample","Cu","Zn","Pb","Fe","Ni","Ag","Sb","As","Co","Cd","Sn","Te",
+  "Bi","Mn","Li","Al","V","Cr","Rb","Sr","Ba"
+)
+
+stopifnot(ncol(Ingots) == 22)  # 1 id + 21 variables
+
+head(Ingots)
+```
+
+```{r}
+
+#install.packages("tidyverse")
+library(tibble)
+library(ggplot2)
+
+## Normality checks (raw)
+X_raw <- as.matrix(Ingots[, -1])
+
+# Univariate QQ for a few skewed variables
+par(mfrow=c(2,3))
+for (v in c("Ni","Ag","Sb","As","Cd","Zn")) { qqnorm(X_raw[,v], main=paste("QQ:", v)); qqline(X_raw[,v]) }
+par(mfrow=c(1,1))
+
+# Mardia (raw)
+psych::mardia(X_raw)
+
+n <- nrow(X_raw); p <- ncol(X_raw)
+d2_raw <- mahalanobis(X_raw, center = colMeans(X_raw), cov = cov(X_raw))
+th_raw <- qchisq(ppoints(n), df = p)
+
+qq_raw_df <- tibble(theoretical = sort(th_raw), observed = sort(d2_raw))
+
+ggplot(qq_raw_df, aes(theoretical, observed)) +
+  geom_point() +
+  geom_abline(intercept = 0, slope = 1) +
+  labs(title = "Multivariate Q–Q (raw)", x = paste0("Theoretical chi-square (df=", p, ")"),
+       y = expression(Ordered~d^2)) + theme_minimal()
+
+```
+
+```{r}
+# LOG10 + MAD scaling (robust), stored for later reuse
+# Assumes `Ingots` has column 1 = Sample, columns 2:22 = numeric elements
+
+eps <- 1e-6
+Ingots_log <- Ingots
+Ingots_log[, -1] <- log10(Ingots_log[, -1] + eps)
+
+vars    <- names(Ingots_log)[-1]
+medians <- apply(Ingots_log[, -1], 2, median, na.rm = TRUE)
+mads    <- mapply(function(x, m) mad(x, center = m, constant = 1, na.rm = TRUE),
+                  as.data.frame(Ingots_log[, -1]), medians)
+mads[mads == 0] <- 1e-9  # safety
+
+Ingots_log_mad <- Ingots
+Ingots_log_mad[, -1] <- sweep(Ingots_log[, -1], 2, medians, FUN = "-")
+Ingots_log_mad[, -1] <- sweep(Ingots_log_mad[, -1], 2, mads,    FUN = "/")
+
+#matrix
+X_log_mad <- as.matrix(Ingots_log_mad[, -1]); rownames(X_log_mad) <- Ingots$Sample
+X_log_mad
+```
+
+```{r}
+#install.packages("ggcorrplot")
+#install.packages("tidyverse")
+library(tidyverse)
+library(ggcorrplot)
+
+corr_mat <- cor(X_log_mad)
+ggcorrplot(corr_mat, hc.order = TRUE, type = "lower",
+           lab = FALSE, show.diag = TRUE, outline.col = "white") +
+  labs(title = "Correlation (log10 + MAD scaled)")
+
+mad_long <- Ingots_log_mad |>
+  tidyr::pivot_longer(-Sample, names_to = "Element", values_to = "value")
+
+p_hist <- ggplot(mad_long, aes(value)) +
+  geom_histogram(bins = nclass.FD(mad_long$value), fill = "steelblue", color = "white") +
+  facet_wrap(~Element, scales = "free_x", ncol = 3) +
+  labs(
+    title = "Histograms — LOG10 + MAD scaled data",
+    x = "Robust z-score (median/MAD)", y = "Count"
+  ) +
+  theme_minimal(base_size = 12) +
+  theme(strip.text = element_text(face = "bold"))
+
+p_hist
+
+# Save high-res PNG 
+ggsave("histograms_log_mad.png", plot = p_hist, width = 12, height = 8, dpi = 300)
+```
+```{r}
+library(psych)   # for mardia()
+library(ggplot2)
+
+X_log_mad <- as.matrix(Ingots_log_mad[, -1])
+rownames(X_log_mad) <- Ingots_log_mad$Sample
+
+# 1) Mardia skewness & kurtosis
+mardia_result <- psych::mardia(X_log_mad)
+mardia_result
+# -> Check $skew and $kurtosis for p-values; significant = not MVN.
+
+# 2) Multivariate Q–Q plot (Mahalanobis vs chi-square)
+n  <- nrow(X_log_mad)
+p  <- ncol(X_log_mad)
+d2 <- mahalanobis(X_log_mad, center = colMeans(X_log_mad), cov = cov(X_log_mad))
+th <- qchisq(ppoints(n), df = p)
+
+qq_df <- tibble(theoretical = sort(th), observed = sort(d2))
+
+p_mvn <- ggplot(qq_df, aes(theoretical, observed)) +
+  geom_point(color = "steelblue") +
+  geom_abline(intercept = 0, slope = 1, linetype = "dashed") +
+  labs(
+    title = "Multivariate Q–Q plot (log10 + MAD)",
+    x = paste0("Theoretical χ² (df = ", p, ")"),
+    y = expression(Ordered~d^2)
+  ) +
+  theme_minimal(base_size = 12)
+
+p_mvn
+
+# Save as PNG for slides
+ggsave("qqplot_log_mad.png", plot = p_mvn, width = 8, height = 6, dpi = 300)
+
+```
+
+```{r}
+## LOG10 + STANDARDISATION
+eps <- 1e-6
+Ingots_log_std <- Ingots
+Ingots_log_std[, -1] <- log10(Ingots_log_std[, -1] + eps)
+
+# Standardise each variable: (x - mean)/sd
+Ingots_log_std[, -1] <- scale(Ingots_log_std[, -1], center = TRUE, scale = TRUE)
+
+X_log_std <- as.matrix(Ingots_log_std[, -1])
+rownames(X_log_std) <- Ingots$Sample
+
+## Mardia test on LOG10 + STANDARDISED 
+library(psych)
+mardia_std <- psych::mardia(X_log_std)
+mardia_std
+
+## --- For comparison: show the MAD result you had ---
+# mardia_result (MAD) should already exist as: mardia(X_log_mad)
+
+
+```
+
