@@ -1,0 +1,287 @@
+---
+title: "STAT394 General"
+output: pdf_document
+date: "2025-10-06"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+library(ggplot2)
+library(tidyverse)
+library(corrplot)
+library(GGally)
+library(knitr)
+library(ggbiplot)
+```
+
+```{r}
+# Data setup
+df <- read.csv("orichalcum_ingots_dataset.csv", skip = 1, header = TRUE)
+Ingots <- df[, 1:(ncol(df)-2)]
+colnames(Ingots) <- c("Sample","Cu","Zn","Pb","Fe","Ni","Ag","Sb","As","Co","Cd","Sn","Te","Bi","Mn","Li","Al","V","Cr","Rb","Sr","Ba")
+head(Ingots)
+
+Ingots.long <- Ingots %>%
+  pivot_longer(!Sample, names_to = "Element", values_to = "Concentration")
+head(Ingots.long)
+```
+```{r}
+library(MVN)
+
+# Univariate Q-Q for one element
+qqnorm(Ingots$Ni); qqline(Ingots$Ni)
+
+# Multivariate Mardia test
+
+# --- setup (safe CRAN mirror + install if needed) ---
+options(repos = c(CRAN = "https://cloud.r-project.org"))
+if (!requireNamespace("psych", quietly = TRUE)) install.packages("psych")
+if (!requireNamespace("ggplot2", quietly = TRUE)) install.packages("ggplot2")
+
+library(psych)
+library(ggplot2)
+
+# --- data matrix: drop the Sample column ---
+X <- as.matrix(Ingots[ , -1])
+
+# 1) Univariate Q–Q for a few key variables (change names as you like)
+par(mfrow = c(2,3))
+for (v in c("Ni","Ag","Sb","As","Cd","Zn")){
+  qqnorm(X[ , v], main = paste("QQ:", v)); qqline(X[ , v])
+}
+par(mfrow = c(1,1))
+
+# 2) Mardia multivariate normality test (skewness + kurtosis)
+mardia_res <- psych::mardia(X)
+mardia_res  # shows skew Chi^2, p; kurtosis z, p
+
+# 3) Multivariate Q–Q plot using Mahalanobis d^2 vs Chi^2 quantiles
+n  <- nrow(X); p <- ncol(X)
+mu <- colMeans(X)
+S  <- cov(X)
+
+d2 <- mahalanobis(X, center = mu, cov = S)
+th <- qchisq(ppoints(n), df = p)
+
+qq_df <- data.frame(theoretical = sort(th), observed = sort(d2))
+
+ggplot(qq_df, aes(theoretical, observed)) +
+  geom_point() +
+  geom_abline(intercept = 0, slope = 1) +
+  labs(title = "Multivariate Q–Q (Mahalanobis d² vs Chi²)",
+       x = bquote(paste("Theoretical ", chi^2, " (df=", .(p), ")")),
+       y = expression("Ordered " * d^2)) +
+  theme_minimal()
+
+# (Optional) Flag points above 95% chi-square cutoff
+cut95 <- qchisq(0.95, df = p)
+which(d2 > cut95)  # row indices of potential outliers
+
+```
+
+```{r}
+
+# --- Dependencies ---
+library(tidyverse)
+
+# --- 0) Helper: make a facet histogram+boxplot for a long df ---
+facet_hist_box <- function(df_long, xlab, title, hist_fill, box_fill) {
+  ggplot(df_long, aes(x = value)) +
+    geom_histogram(bins = nclass.FD(df_long$value),
+                   fill = hist_fill, color = "white") +
+    # Boxplot parked under the histogram for quick shape comparison
+    geom_boxplot(aes(y = -0.5),
+                 notch = TRUE,
+                 fill = box_fill, color = "black",
+                 alpha = 0.8, width = 0.30,
+                 outlier.size = 0.8) +
+    facet_wrap(~Element, scales = "free_x", ncol = 3) +
+    theme_minimal(base_size = 12) +
+    labs(title = title, x = xlab, y = NULL) +
+    theme(
+      strip.text = element_text(face = "bold"),
+      axis.text.y  = element_blank(),
+      axis.ticks.y = element_blank(),
+      panel.grid.major.y = element_blank(),
+      panel.grid.minor.y = element_blank()
+    )
+}
+
+# --- 1) Raw (as in your current Ingots) -> long ---
+raw_long <- Ingots |>
+  pivot_longer(-Sample, names_to = "Element", values_to = "value")
+
+p_raw <- facet_hist_box(
+  raw_long,
+  xlab  = "Concentration",
+  title = "Element distributions — RAW",
+  hist_fill = "skyblue",
+  box_fill  = "orange"
+)
+
+# --- 2) Log10 transform (add tiny epsilon to guard zeros) ---
+eps <- 1e-6
+Ingots_log <- Ingots
+Ingots_log[ , -1] <- log10(Ingots_log[ , -1] + eps)
+
+log_long <- Ingots_log |>
+  pivot_longer(-Sample, names_to = "Element", values_to = "value")
+
+p_log <- facet_hist_box(
+  log_long,
+  xlab  = "log10(Concentration)",
+  title = "Element distributions — LOG10",
+  hist_fill = "lightgreen",
+  box_fill  = "darkseagreen3"
+)
+
+# --- 3) Log10 + STANDARDISE (z-scores per element) ---
+# scale() returns a matrix; convert back to data frame and keep names
+Z <- as.data.frame(scale(Ingots_log[ , -1], center = TRUE, scale = TRUE))
+Z <- cbind(Sample = Ingots$Sample, Z)
+
+z_long <- Z |>
+  pivot_longer(-Sample, names_to = "Element", values_to = "value")
+
+p_z <- facet_hist_box(
+  z_long,
+  xlab  = "z-score (log10 scaled)",
+  title = "Element distributions — LOG10 + STANDARDISED",
+  hist_fill = "thistle",
+  box_fill  = "plum4"
+)
+
+# --- 4) Print (for notebooks) ---
+p_raw
+p_log
+p_z
+
+# --- 5) Save crisp images for slides (300 dpi PNGs) ---
+ggsave("raw_hist_box.png", p_raw, width = 10, height = 8, dpi = 300)
+ggsave("log_hist_box.png", p_log, width = 10, height = 8, dpi = 300)
+ggsave("log_std_hist_box.png", p_z, width = 10, height = 8, dpi = 300)
+
+```
+
+```{r}
+# Summary histograms
+ggplot(Ingots.long, aes(x = Concentration)) +
+  # Histogram
+  geom_histogram(bins = nclass.FD(Ingots.long$Concentration),
+                 fill = "skyblue", color = "white") +
+  # Boxplot, anchored at y = -0.5 so it sits below
+  geom_boxplot(aes(y = -0.5), notch = TRUE, box.color='orange', alpha = 0.7, width = 0.3, outlier.size = 1) +
+  facet_wrap(~Element, scales = "free_x", ncol = 2) +
+  theme_minimal() +
+  labs(title = "All element histograms with boxplots",
+       x = "Concentration",
+       y = NULL) +
+  theme(
+    strip.text = element_text(face = "bold"),
+    axis.text.y = element_blank(),
+    axis.ticks.y = element_blank(),
+    panel.grid.major.y = element_blank(),
+    panel.grid.minor.y = element_blank()
+  )
+
+
+summary_table <- Ingots %>%
+  select(-Sample) %>%
+  pivot_longer(everything(), names_to = "Element", values_to = "Concentration") %>%
+  group_by(Element) %>%
+  summarise(
+    Mean   = mean(Concentration, na.rm = TRUE),
+    Median = median(Concentration, na.rm = TRUE),
+    LQ     = quantile(Concentration, 0.25, na.rm = TRUE),
+    UQ     = quantile(Concentration, 0.75, na.rm = TRUE),
+    Min    = min(Concentration, na.rm = TRUE),
+    Max    = max(Concentration, na.rm = TRUE),
+    .groups = "drop"
+  )
+kable(summary_table)
+```
+
+Sort histograms better - Boxplot issues as well. Reorganise table by order of elements in dataset.
+
+```{r}
+# Mahalanobis Distances
+est.mu <- colMeans(Ingots[,-1])
+est.covar <- var(Ingots[,-1])
+
+dM <- mahalanobis(Ingots[,-1], est.mu, est.covar)
+upper.quantiles <- qchisq(c(.9, .95, .99), df=21)
+density.at.quantiles <- dchisq(x=upper.quantiles, df=21)
+cut.points <- data.frame(upper.quantiles, density.at.quantiles)
+
+ggplot(data.frame(dM), aes(x=dM)) +
+  geom_histogram(aes(y=after_stat(density)), bins=nclass.FD(dM),
+  fill="white", col="black") +
+  stat_function(fun=dchisq, args = list(df=21),
+  col="blue", linewidth=2, alpha=.7, xlim=c(0,65)) +
+  geom_segment(data=cut.points,
+  aes(x=upper.quantiles, xend=upper.quantiles,
+  y=rep(0,3), yend=density.at.quantiles),
+  col="red", linewidth=1)
+
+upper.quantiles
+
+x <- sum(dM > upper.quantiles[2])
+x
+```
+
+```{r}
+# Suprise values
+library(pander)
+Ingots$dM <- dM
+Ingots$surprise <- cut(Ingots$dM,
+                    breaks= c(0, upper.quantiles, Inf),
+                    labels=c("Typical", "Somewhat", "Surprising", "Very"))
+pander(table(Ingots$surprise))
+```
+
+```{r}
+# PCA
+df <- read.csv("orichalcum_ingots_dataset.csv", skip = 1, header = TRUE)
+pca.ingots.init <- df[, 1:(ncol(df)-2)]
+colnames(pca.ingots.init) <- c("Sample","Cu","Zn","Pb","Fe","Ni","Ag","Sb","As","Co","Cd","Sn","Te","Bi","Mn","Li","Al","V","Cr","Rb","Sr","Ba")
+
+PCA.Ingots <- prcomp(pca.ingots.init[,-1], center = T, scale = T)
+PCA.Ingots$sdev
+
+variance.PCA.Ingots <- PCA.Ingots$sdev^2 / sum(PCA.Ingots$sdev^2)
+qplot(c(1:21), variance.PCA.Ingots) +
+  geom_line() +
+  geom_point(size = 4) +
+  xlab("Principal Component") +
+  ylab("Variance Explained") +
+  ggtitle("Scree Plot") +
+  ylim(0,1) + 
+  theme_minimal()
+
+ggbiplot(PCA.Ingots, obs.scale = 1, var.scale = 1, alpha = 0.1, 
+         labels = Ingots$Sample, groups = Ingots$surpise,
+         varname.size = 3, ellipse = TRUE, circle = TRUE) + theme_minimal()
+```
+
+```{r}
+pca.ingots.init.outliers <- pca.ingots.init[-c(13,38), ]
+Ingots.outliers <- Ingots[-c(13,38),]
+
+PCA.Ingots.outliers <- prcomp(pca.ingots.init.outliers[,-1], center = T, scale = T)
+
+variance.PCA.Ingots.outliers <- PCA.Ingots.outliers$sdev^2 / sum(PCA.Ingots.outliers$sdev^2)
+qplot(c(1:21), variance.PCA.Ingots.outliers) +
+  geom_line() +
+  geom_point(size = 4) +
+  xlab("Principal Component") +
+  ylab("Variance Explained") +
+  ggtitle("Scree Plot") +
+  ylim(0,1) + theme_minimal()
+
+ggbiplot(PCA.Ingots.outliers, obs.scale = 1, var.scale = 1, alpha = 0.1, 
+         labels = Ingots.outliers$Sample, groups = Ingots.outliers$surpise,
+         varname.size = 3, ellipse = TRUE, circle = TRUE) + theme_minimal()
+```
